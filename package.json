@@ -1,0 +1,19 @@
+{
+  "name": "assemble-cars-lambda",
+  "version": "0.0.0",
+  "description": "Assemble partial raw CAR files into complete CAR files",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nftstorage/assemble-cars-lambda.git"
+  },
+  "author": "Vasco Santos <santos.vasco10@gmail.com>",
+  "license": "(Apache-2.0 OR MIT)",
+  "bugs": {
+    "url": "https://github.com/nftstorage/assemble-cars-lambda/issues"
+  },
+  "homepage": "https://github.com/nftstorage/assemble-cars-lambda#readme"
+}
