@@ -6,7 +6,7 @@
     "format": "prettier -w src",
     "build": "bash scripts/build.sh",
     "init": "npm run build && DEBUG=assemble-cars:* node scripts/bin.js init",
-    "test": "ava",
+    "test": "ava test/*.node.js",
     "deploy": "aws lambda update-function-code --cli-connect-timeout 15000 --region $AWS_REGION --function-name $LAMBDA --zip-file fileb://dist/lambda.zip",
     "deploy-l": "aws lambda update-function-code --cli-connect-timeout 15000 --region us-east-2 --function-name assemble-cars --zip-file fileb://dist/lambda.zip",
     "invoke": "aws lambda invoke --cli-binary-format raw-in-base64-out --region $AWS_REGION --function-name $LAMBDA --payload file://event.json --log-type Tail /dev/null | jq -r .LogResult | base64 -d"
@@ -35,9 +35,11 @@
     "dotenv": "^10.0.0",
     "ipfs-car": "^0.6.1",
     "p-defer": "^3.0.0",
+    "p-map": "^4.0.0",
     "pino-pretty": "^7.3.0",
     "prettier": "^2.4.1",
-    "sade": "^1.8.1"
+    "sade": "^1.8.1",
+    "uint8arrays": "^3.0.0"
   },
   "prettier": {
     "trailingComma": "es5",

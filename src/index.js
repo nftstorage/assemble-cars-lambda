@@ -2,21 +2,15 @@
 
 const aws = require('aws-sdk')
 
+const { S3Client } = require ('./s3-client.js')
+const { Logger } = require('./logging')
 const { carStat, inspectCarBlocks } = require('./car')
-const { logger, elapsed, serializeError } = require('./logging')
 
 // TODO: Refine MAX_SIZE_TO_ATTEMPT - currently 100MB
 const MAX_SIZE_TO_ATTEMPT = 100 * 1024 * 1024
 
-// TODO: thin s3 client?
-
 /**
- * Lambda triggers on S3 write object event.
- *
- * With the know object key, we get the S3 object and inspect the CAR content to get its:
- * - rootCid
- * - structure
- * - size
+ * Lambda triggers on S3 write object event for "raw/" prefix.
  *
  * We write the resulting car to "/complete" namespace if:
  * - S3 Object Metadata has a "Complete" structure 
@@ -24,8 +18,8 @@ const MAX_SIZE_TO_ATTEMPT = 100 * 1024 * 1024
  * for that root CID already has all the expected chunks to traverse the dag.
  */
 async function main(event) {
-  const s3 = new aws.S3({ apiVersion: '2006-03-01' })
-  const start = process.hrtime.bigint()
+  const logger = new Logger()
+  const s3Client = new S3Client(logger)
 
   // Get the object from the event
   const bucket = event.Records[0].s3.bucket.name
@@ -34,34 +28,28 @@ async function main(event) {
   )
 
   if (!key.startsWith('raw')) {
-    logger.error(
-      `lambda should only triggered with raw namespace: CAR with ${key} from bucket ${bucket}:`
-    )
-    throw new Error('lambda should only triggered with raw namespace')
+    const e = new Error(`lambda should only triggered with raw namespace: CAR with ${key} from bucket ${bucket}`)
+    logger.error(e)
+    throw e
   }
 
-  const logOpts = { start, bucket, key }
-
-  const { body, metadata } = await getS3Object(s3, bucket, key, logOpts)
+  const { body, metadata } = await s3Client.getObject(bucket, key)
   // @ts-ignore body has different type from AWS SDK
-  const { rootCid, structure, size } = await inspectCar(body, metadata, logOpts)
+  const { rootCid, structure, size } = await inspectCar(body, metadata, logger, { bucket, key })
+  const completePath = `complete/${rootCid}.car`
 
+  // Written CAR is already complete
   if (structure === 'Complete') {
-    await putS3Object(s3, bucket, rootCid.toString(), body, logOpts)
+    console.log('structure is complete')
+    await s3Client.putObject(bucket, completePath, body)
 
     return { rootCid, structure }
   }
 
-  /**
-   * If inserted CAR from the trigger is not complete, let's verify if:
-   * - We know the dag size of the CAR (aka we only support read for dagPB for now)
-   * - The know size is bigger than the MAX_SIZE_TO_ATTEMPT
-   * - We have already received everything in S3
-   */
-
+  // Validate Written CAR is DagPB encoded and we know its size
   if (!size) {
     logger.info(
-      { elapsed: elapsed(start), path: key },
+      key,
       `Car with root ${rootCid} does not have a DagPB root and we cannot find the size`
     )
     return { rootCid, structure }
@@ -69,36 +57,41 @@ async function main(event) {
 
   if (size > MAX_SIZE_TO_ATTEMPT) {
     logger.info(
-      { elapsed: elapsed(start), path: key },
+      key,
       `Car with root ${rootCid} is not complete for object ${key} from bucket ${bucket} and its known size is larger than ${MAX_SIZE_TO_ATTEMPT}`
     )
     return { rootCid, structure }
   }
 
-  const { accumSize } = await getDirectoryStat(s3, bucket, key, logOpts)
+  console.log('get directory')
+  const { accumSize } = await s3Client.getDirectoryStat(bucket, key)
 
   if (size > accumSize) {
     logger.info(
-      { elapsed: elapsed(start), path: key },
+      key,
       `Car with root ${rootCid} is still not entirely uploaded to bucket ${bucket}`
     )
     return { rootCid, structure }
   }
+
+  // Attempt to traverse the full dag
+  return { rootCid, structure, directoryStructure: 'Complete' }
 }
 
 /**
- * @param {Uint8Array} body
+ * @param {Uint8Array} car
  * @param {Object} metadata
- * @param {LogOpts} logOpts
+ * @param {Logger} logger
+ * @param {S3Inputs} s3Inputs
  */
-async function inspectCar(body, metadata, { start, key, bucket }) {
+async function inspectCar(car, metadata, logger, { key, bucket }) {
   let rootCid, structure, size
   try {
-    const stat = await carStat(body)
+    const stat = await carStat(car)
     rootCid = stat.rootCid
 
     logger.debug(
-      { elapsed: elapsed(start), path: key },
+      key,
       `Obtained root cid ${rootCid} for object ${key} from bucket ${bucket}`
     )
 
@@ -108,15 +101,16 @@ async function inspectCar(body, metadata, { start, key, bucket }) {
 
   } catch (err) {
     logger.error(
-      `Error parsing CAR with ${key} from bucket ${bucket}: ${serializeError(
-        err
-      )}`
+      err,
+      {
+        complementMessage: `Error parsing CAR with ${key} from bucket ${bucket}: `
+      }
     )
     throw err
   }
 
   logger.debug(
-    { elapsed: elapsed(start), path: key },
+    key,
     `Obtained structure ${structure} for object ${key} from bucket ${bucket}`
   )
 
@@ -128,112 +122,7 @@ async function inspectCar(body, metadata, { start, key, bucket }) {
 }
 
 /**
- * @param {aws.S3} s3
- * @param {string} bucket
- * @param {string} key
- * @param {LogOpts} logOpts
- */
-async function getS3Object(s3, bucket, key, { start }) {
-  let s3Object
-
-  try {
-    logger.debug(
-      { elapsed: elapsed(start), path: key },
-      `Getting object ${key} from bucket ${bucket}`
-    )
-
-    s3Object = await s3
-      .getObject({
-        Bucket: bucket,
-        Key: key,
-      })
-      .promise()
-  } catch (err) {
-    logger.error(
-      `Error getting object ${key} from bucket ${bucket}: ${serializeError(
-        err
-      )}`
-    )
-    throw err
-  }
-
-  return {
-    body: s3Object.Body,
-    metadata: s3Object.Metadata
-  }
-}
-
-/**
- * @param {aws.S3} s3
- * @param {string} bucket
- * @param {string} rootCid
- * @param {aws.S3.Body} body
- * @param {LogOpts} logOpts
- */
-async function putS3Object(s3, bucket, rootCid, body, { start }) {
-  const path = `complete/${rootCid}.car`
-
-  try {
-    logger.debug(
-      { elapsed: elapsed(start), path },
-      `Putting object ${path} to bucket ${bucket}`
-    )
-
-    await s3
-      .putObject({
-        Bucket: bucket,
-        Key: path,
-        Body: body
-      })
-      .promise()
-  } catch (err) {
-    logger.error(
-      `Error putting object ${path} to bucket ${bucket}: ${serializeError(
-        err
-      )}`
-    )
-    throw err
-  }
-}
-
-/**
- * @param {aws.S3} s3
- * @param {string} bucket
- * @param {string} key
- * @param {LogOpts} logOpts
- */
-async function getDirectoryStat(s3, bucket, key, { start }) {
-  const prefix = key.replace(/[^\/]*$/, '').slice(0, -1)
-
-  let accumSize
-  try {
-    logger.debug(
-      { elapsed: elapsed(start), path: key },
-      `Getting list of objects of prefix ${prefix} from bucket ${bucket}`
-    )
-    const s3ListObjects = await s3.listObjectsV2({
-      Bucket: bucket,
-      Prefix: prefix
-    }).promise()
-
-    accumSize = s3ListObjects.Contents.reduce((acc, obj) => acc + obj.Size, 0)
-  } catch (err) {
-    logger.error(
-      `Error listing objects of prefix ${prefix} from bucket ${bucket}: ${serializeError(
-        err
-      )}`
-    )
-    throw err
-  }
-
-  return {
-    accumSize
-  }
-}
-
-/**
- * @typedef LogOpts
- * @property {bigint} start
+ * @typedef S3Inputs
  * @property {string} bucket
  * @property {string} key
  */

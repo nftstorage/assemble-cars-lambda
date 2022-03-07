@@ -5,10 +5,13 @@ const { TreewalkCarSplitter } = require('carbites')
 const { Blob } = require('@web-std/blob')
 const { CarReader } = require('@ipld/car')
 const { pack } = require('ipfs-car/pack')
-const { packToBlob } = require('ipfs-car/pack/blob')
+const { sha256 } = require('multiformats/hashes/sha2')
 const pDefer = require('p-defer')
+const pMap = require('p-map')
+const { toString } = require('uint8arrays')
 
 const { handler } = require('../src/index') // lambda function
+const { generateCar, generateSplittedCar } = require('./utils/cars')
 const { largerContent } = require('./fixtures/larger-content')
 
 const createS3PutEvent = ({
@@ -37,36 +40,33 @@ test('should fail if triggered not by a raw car', async t => {
       objectKey: 'complete/bafybeif3hyrtm2skjmldufjid3myfp37sxyqbtz7xe3f2fqyd7ugi33b2a.car'
     })
   ))
-  t.is(error.message, 'lambda should only triggered with raw namespace')
+  t.is(error.message, 'lambda should only triggered with raw namespace: CAR with complete/bafybeif3hyrtm2skjmldufjid3myfp37sxyqbtz7xe3f2fqyd7ugi33b2a.car from bucket test-bucket')
 })
 
 test('should put complete CAR file when raw file has complete structure metadata', async t => {
   const deferredWrite = pDefer()
-  const { root, car } = await packToBlob({
-    input: [{
-      path: 'file.txt',
-      content: new Uint8Array([21, 31]),
-    }],
-    wrapWithDirectory: false
-  })
-
-  const body = new Uint8Array(await car.arrayBuffer())
+  const { car, key, root } = await generateCar(2)
 
   // Mock S3
-  aws.mock('S3', 'getObject', {
-    Body: body, Metadata: {
-      structure: 'Complete'
+  aws.mock('S3', 'getObject', (params) => {
+    if (params.Key === key) {
+      return Promise.resolve({
+        Body: car, Metadata: {
+          structure: 'Complete'
+        }
+      })
     }
+    return Promise.reject('invalid s3 object requestes')
   })
   aws.mock('S3', 'putObject', (params, cb) => {
     t.deepEqual(params.Key, `complete/${root.toString()}.car`)
-    t.deepEqual(params.Body, body)
+    t.deepEqual(params.Body, car)
 
     deferredWrite.resolve()
     cb(undefined, putObjectOutput)
   })
 
-  const { rootCid, structure } = await handler(createS3PutEvent())
+  const { rootCid, structure } = await handler(createS3PutEvent({ objectKey: key }))
   t.deepEqual(root.toString(), rootCid.toString())
   t.deepEqual(structure, 'Complete')
 
@@ -76,25 +76,26 @@ test('should put complete CAR file when raw file has complete structure metadata
 
 test('should put complete raw file without metadata structure by its code and single block', async t => {
   const deferredWrite = pDefer()
-  const { root, car } = await packToBlob({
-    input: [{
-      path: 'file.txt',
-      content: new Uint8Array([21, 31]),
-    }],
-    wrapWithDirectory: false
-  })
+  const { car, key, root } = await generateCar(2)
 
-  const body = new Uint8Array(await car.arrayBuffer())
-  aws.mock('S3', 'getObject', { Body: body, Metadata: {} })
+  // Mock S3
+  aws.mock('S3', 'getObject', (params) => {
+    if (params.Key === key) {
+      return Promise.resolve({
+        Body: car, Metadata: {}
+      })
+    }
+    return Promise.reject('invalid s3 object requestes')
+  })
   aws.mock('S3', 'putObject', (params, cb) => {
     t.deepEqual(params.Key, `complete/${root.toString()}.car`)
-    t.deepEqual(params.Body, body)
+    t.deepEqual(params.Body, car)
 
     deferredWrite.resolve()
     cb(undefined, putObjectOutput)
   })
 
-  const { rootCid, structure } = await handler(createS3PutEvent())
+  const { rootCid, structure } = await handler(createS3PutEvent({ objectKey: key }))
   t.deepEqual(root.toString(), rootCid.toString())
   t.deepEqual(structure, 'Complete')
 
@@ -104,25 +105,26 @@ test('should put complete raw file without metadata structure by its code and si
 
 test('should put dag pb complete CAR file without metadata structure by traversing dag', async t => {
   const deferredWrite = pDefer()
-  const { root, car } = await packToBlob({
-    input: [{
-      path: 'file.txt',
-      content: new Uint8Array([21, 31]),
-    }],
-    wrapWithDirectory: true
-  })
+  const { car, key, root } = await generateCar(2, { wrapWithDirectory: true })
 
-  const body = new Uint8Array(await car.arrayBuffer())
-  aws.mock('S3', 'getObject', { Body: body, Metadata: {} })
+  // Mock S3
+  aws.mock('S3', 'getObject', (params) => {
+    if (params.Key === key) {
+      return Promise.resolve({
+        Body: car, Metadata: {}
+      })
+    }
+    return Promise.reject('invalid s3 object requestes')
+  })
   aws.mock('S3', 'putObject', (params, cb) => {
     t.deepEqual(params.Key, `complete/${root.toString()}.car`)
-    t.deepEqual(params.Body, body)
+    t.deepEqual(params.Body, car)
 
     deferredWrite.resolve()
     cb(undefined, putObjectOutput)
   })
 
-  const { rootCid, structure } = await handler(createS3PutEvent())
+  const { rootCid, structure } = await handler(createS3PutEvent({ objectKey: key }))
   t.deepEqual(root.toString(), rootCid.toString())
   t.deepEqual(structure, 'Complete')
 
@@ -130,89 +132,69 @@ test('should put dag pb complete CAR file without metadata structure by traversi
   await deferredWrite.promise
 })
 
-test.skip('dag pb incomplete CAR file with not all CAR files already stored does not trigger gateway request', async t => {
-  const { root, out } = await pack({
-    input: [{
-      path: 'file.txt',
-      content: largerContent,
-    }],
-    wrapWithDirectory: true
-  })
-  const car = await CarReader.fromIterable(out)
-  const targetSize = 90 // chunk
-
-  const splitter = new TreewalkCarSplitter(car, targetSize)
-  const carParts = []
-  for await (const car of splitter.cars()) {
-    const part = []
-    for await (const block of car) {
-      part.push(block)
-    }
-    carParts.push(part)
-  }
-
-  // Body with only first part
-  const carFile = new Blob(carParts[0], { type: 'application/car' })
-  const body = new Uint8Array(await carFile.arrayBuffer())
-  aws.mock('S3', 'getObject', { Body: body, Metadata: {} })
-  aws.mock('S3', 'listObjectsV2', {
-    Contents: []
-  })
-
-  const { rootCid, structure, response } = await handler(createS3PutEvent())
-  t.deepEqual(root.toString(), rootCid.toString())
-  t.deepEqual(structure, 'Partial')
-  t.is(response, undefined, 'No obtained response')
+test.skip('should not write dag cbor CAR file to complete as we wont know its size', async () => {
+  
 })
 
-test.skip('dag pb incomplete CAR file with all CAR files already stored triggers gateway request', async t => {
-  const { root, out } = await pack({
-    input: [{
-      path: 'file.txt',
-      content: largerContent,
-    }],
-    wrapWithDirectory: true
-  })
-  const car = await CarReader.fromIterable(out)
-  const targetSize = 90 // chunk
+test('should not write complete CAR when dag pb incomplete CAR file written and not all CAR files already stored', async t => {
+  const { carFiles, root } = await generateSplittedCar(36, 90, { wrapWithDirectory: true })
 
-  const splitter = new TreewalkCarSplitter(car, targetSize)
-  const carParts = []
-  for await (const car of splitter.cars()) {
-    const part = []
-    for await (const block of car) {
-      part.push(block)
+  // Body with only first car
+  aws.mock('S3', 'getObject', (params) => {
+    if (params.Key === carFiles[0].key) {
+      return Promise.resolve({
+        Body: carFiles[0].car, Metadata: {}
+      })
     }
-    carParts.push(part)
-  }
-
-  // Body with only first part
-  const carFile = new Blob(carParts[0], { type: 'application/car' })
-  const body = new Uint8Array(await carFile.arrayBuffer())
-  aws.mock('S3', 'getObject', { Body: body, Metadata: {} })
+    return Promise.reject('invalid s3 object requestes')
+  })
   aws.mock('S3', 'listObjectsV2', {
-    Contents: [
-      {
-        Key: `raw/${root.toString()}/304288589213073932/ciqace6wkhzula3pb3vh6uesdnmf5ul42ljzjmtqrvjrgh2zlefg4wq.car`,
-        LastModified: new Date().toISOString(),
-        ETag: '60faf8595327ae9c8a7f7ab099a5c9b0',
-        Size: 49,
-        StorageClass: 'STANDARD'
-      },
-      {
-        Key: `raw/${root.toString()}/304288589213073932/ciqace6wkhzula3pb3vh6uesdnmf5ul42ljzjmtqrvjrgh2zlefg4wq.car`,
-        LastModified: new Date().toISOString(),
-        ETag: '60faf8595327ae9c8a7f7ab099a5c9b0',
-        Size: 49,
-        StorageClass: 'STANDARD'
-      }
-    ]
+    Contents: [carFiles.map(carFile => ({
+      Key: carFile.key,
+      LastModified: new Date().toISOString(),
+      ETag: '60faf8595327ae9c8a7f7ab099a5c9b0',
+      Size: 49,
+      StorageClass: 'STANDARD'
+    })).shift()]
+  })
+  aws.mock('S3', 'putObject', (params, cb) => {
+    throw new Error('should not write complete CAR when dag pb incomplete CAR file written and not all CAR files already stored')
   })
 
-  const { rootCid, structure, response } = await handler(createS3PutEvent())
+  const { rootCid, structure } = await handler(createS3PutEvent({ objectKey: carFiles[0].key }))
   t.deepEqual(root.toString(), rootCid.toString())
   t.deepEqual(structure, 'Partial')
-  t.is(response.ok, true, 'Obtained gateway response')
+})
+
+test.only('dag pb incomplete CAR file with all CAR files already stored triggers gateway request', async t => {
+  const { carFiles, root } = await generateSplittedCar(36, 90, { wrapWithDirectory: true })
+
+  console.log('car files', carFiles)
+  // Write only second CAR
+  aws.mock('S3', 'getObject', (params) => {
+    console.log('params', params)
+    if (params.Key === carFiles[0].key) {
+      return Promise.resolve({
+        Body: carFiles[0].car, Metadata: {}
+      })
+    }
+    return Promise.reject('invalid s3 object requestes')
+  })
+
+  aws.mock('S3', 'listObjectsV2', {
+    Contents: carFiles.map(carFile => ({
+      Key: carFile.key,
+      LastModified: new Date().toISOString(),
+      ETag: '60faf8595327ae9c8a7f7ab099a5c9b0',
+      Size: 49,
+      StorageClass: 'STANDARD'
+    }))
+  })
+
+  const { rootCid, structure, directoryStructure } = await handler(createS3PutEvent({ objectKey: carFiles[0].key }))
+  t.deepEqual(root.toString(), rootCid.toString())
+  t.deepEqual(structure, 'Partial')
+  console.log('directoryStructure', directoryStructure)
 })
 
 const putObjectOutput = {
