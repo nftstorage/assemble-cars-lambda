@@ -123,6 +123,8 @@ async function initLambda() {
       return resolve(data)
     })
   })
+
+  // TODO: Setup cloudwatch
   log(`Successfully created lambda ${name}`)
 }
 

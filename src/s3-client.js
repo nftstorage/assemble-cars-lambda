@@ -6,7 +6,7 @@ class S3Client {
   /**
    * @param {import('./logging.js').Logger} logger
    */
-  constructor (logger) {
+  constructor(logger) {
     this.s3 = new aws.S3({ apiVersion: '2006-03-01' })
     this.logger = logger
   }
@@ -19,10 +19,7 @@ class S3Client {
     let s3Object
 
     try {
-      this.logger.debug(
-        key,
-        `Getting object ${key} from bucket ${bucket}`
-      )
+      this.logger.debug(key, `Getting object ${key} from bucket ${bucket}`)
 
       s3Object = await this.s3
         .getObject({
@@ -31,18 +28,15 @@ class S3Client {
         })
         .promise()
     } catch (err) {
-      this.logger.error(
-        err,
-        {
-          complementMessage: `Error getting object ${key} from bucket ${bucket}: `
-        }
-      )
+      this.logger.error(err, {
+        complementMessage: `Error getting object ${key} from bucket ${bucket}: `,
+      })
       throw err
     }
 
     return {
       body: s3Object.Body,
-      metadata: s3Object.Metadata
+      metadata: s3Object.Metadata,
     }
   }
 
@@ -53,25 +47,19 @@ class S3Client {
    */
   async putObject(bucket, key, body) {
     try {
-      this.logger.debug(
-        key,
-        `Putting object ${key} to bucket ${bucket}`
-      )
+      this.logger.debug(key, `Putting object ${key} to bucket ${bucket}`)
 
       await this.s3
         .putObject({
           Bucket: bucket,
           Key: key,
-          Body: body
+          Body: body,
         })
         .promise()
     } catch (err) {
-      this.logger.error(
-        err,
-        {
-          complementMessage: `Error putting object ${key} to bucket ${bucket}: `
-        }
-      )
+      this.logger.error(err, {
+        complementMessage: `Error putting object ${key} to bucket ${bucket}: `,
+      })
       throw err
     }
   }
@@ -83,34 +71,36 @@ class S3Client {
   async getDirectoryStat(bucket, key) {
     const prefix = key.replace(/[^\/]*$/, '').slice(0, -1)
 
-    let accumSize
+    let accumSize,
+      directoryKeys = []
     try {
       this.logger.debug(
         key,
         `Getting list of objects of prefix ${prefix} from bucket ${bucket}`
       )
-      const s3ListObjects = await this.s3.listObjectsV2({
-        Bucket: bucket,
-        Prefix: prefix
-      }).promise()
+      const s3ListObjects = await this.s3
+        .listObjectsV2({
+          Bucket: bucket,
+          Prefix: prefix,
+        })
+        .promise()
 
       accumSize = s3ListObjects.Contents.reduce((acc, obj) => acc + obj.Size, 0)
+      directoryKeys = s3ListObjects.Contents.map((obj) => obj.Key)
     } catch (err) {
-      this.logger.error(
-        err,
-        {
-          complementMessage: `Error listing objects of prefix ${prefix} from bucket ${bucket}: `
-        }
-      )
+      this.logger.error(err, {
+        complementMessage: `Error listing objects of prefix ${prefix} from bucket ${bucket}: `,
+      })
       throw err
     }
 
     return {
-      accumSize
+      accumSize,
+      directoryKeys,
     }
   }
 }
 
 module.exports = {
-  S3Client
+  S3Client,
 }

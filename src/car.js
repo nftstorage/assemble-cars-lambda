@@ -72,9 +72,7 @@ async function inspectCarBlocks(rootCid, blocksIterator) {
       structure = 'Complete'
     } else {
       // Iterate Dag links
-      const isComplete = iterateDag(rawRootBlock, blocks)
-
-      if (isComplete) {
+      if (canTraverseDag(rawRootBlock, blocks)) {
         structure = 'Complete'
       } else {
         structure = 'Partial'
@@ -85,10 +83,10 @@ async function inspectCarBlocks(rootCid, blocksIterator) {
 }
 
 /**
- * Iterate over a dag starting on the raw block and using the CAR blocks.
+ * Traverse over a dag starting on the raw block and using the CAR blocks.
  * Returns whether the DAG is complete.
  */
-function iterateDag(rawBlock, blocks) {
+function canTraverseDag(rawBlock, blocks) {
   const decoder = decoders.find((d) => d.code === rawBlock.cid.code)
   const rBlock = new Block({
     cid: rawBlock.cid,
@@ -96,7 +94,6 @@ function iterateDag(rawBlock, blocks) {
     value: decoder.decode(rawBlock.bytes),
   })
   const bLinks = Array.from(rBlock.links())
-
   for (const link of bLinks) {
     const existingBlock = blocks.find((b) => b.cid.equals(link[1]))
 
@@ -106,7 +103,7 @@ function iterateDag(rawBlock, blocks) {
     }
 
     // Incomplete Dag
-    if (!iterateDag(existingBlock, blocks)) {
+    if (!canTraverseDag(existingBlock, blocks)) {
       return false
     }
   }
@@ -125,10 +122,13 @@ function cumulativeSize(pbNodeBytes, pbNode) {
   // NOTE: Tsize is optional, but all ipfs implementations we know of set it.
   // It's metadata, that could be missing or deliberately set to an incorrect value.
   // This logic is the same as used by go/js-ipfs to display the cumulative size of a dag-pb dag.
-  return pbNodeBytes.byteLength + pbNode.Links.reduce((acc, curr) => acc + (curr.Tsize || 0), 0)
+  return (
+    pbNodeBytes.byteLength +
+    pbNode.Links.reduce((acc, curr) => acc + (curr.Tsize || 0), 0)
+  )
 }
 
 module.exports = {
   carStat,
-  inspectCarBlocks
+  inspectCarBlocks,
 }

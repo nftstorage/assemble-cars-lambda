@@ -1,12 +1,13 @@
-const pMap = require('p-map')
 const { toString } = require('uint8arrays')
 
 const { Blob } = require('@web-std/blob')
 const { sha256 } = require('multiformats/hashes/sha2')
-const { TreewalkCarSplitter } = require('carbites')
+const { TreewalkCarSplitter, TreewalkCarJoiner } = require('carbites')
 const { CarReader } = require('@ipld/car')
 const { pack } = require('ipfs-car/pack')
 const { packToBlob } = require('ipfs-car/pack/blob')
+
+const { collectBytes } = require('../../src/utils')
 
 /**
  * @param {number} length
@@ -16,7 +17,7 @@ async function generateCar (length, packOptions = {}) {
   const { root, car } = await packToBlob({
     input: [{
       path: 'file.txt',
-      content: generateUint8Array(length), // 2
+      content: generateUint8Array(length),
     }],
     wrapWithDirectory: false,
     ...packOptions
@@ -41,7 +42,7 @@ async function generateSplittedCar (length, targetSize, packOptions = {}) {
   const { root, out } = await pack({
     input: [{
       path: 'file.txt',
-      content: generateUint8Array(length), // 36
+      content: generateUint8Array(length),
     }],
     wrapWithDirectory: true,
     ...packOptions
@@ -59,19 +60,27 @@ async function generateSplittedCar (length, targetSize, packOptions = {}) {
   }
 
   // Create Car files
-  const carFiles = await pMap(carParts, async part => {
+  const carFiles = await Promise.all(carParts.map(async part => {
     const blob = new Blob(part, { type: 'application/car' })
     const car = new Uint8Array(await blob.arrayBuffer())
     const multihash = await sha256.digest(car)
     return {
       car,
-      key: `raw/${root.toString()}/${toString(multihash.bytes, 'base32')}.car`
+      key: `raw/${root.toString()}/${toString(multihash.bytes, 'base32')}.car`,
+      size: car.byteLength
     }
-  })
+  }))
+
+  // Create Join Car
+  const carReaders = await Promise.all(carFiles.map(cf =>
+    CarReader.fromBytes(cf.car)))
+  const joiner = new TreewalkCarJoiner(carReaders)
+  const directoryCar = await collectBytes(joiner.car())
 
   return {
     root,
-    carFiles
+    carFiles,
+    directoryCar
   }
 }
 

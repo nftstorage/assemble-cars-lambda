@@ -32,10 +32,7 @@ class Logger {
    * @param {string} message
    */
   info(path, message) {
-    logger.info(
-      { elapsed: elapsed(this.start), path },
-      message
-    )
+    logger.info({ elapsed: elapsed(this.start), path }, message)
   }
 
   /**
@@ -43,10 +40,7 @@ class Logger {
    * @param {string} message
    */
   debug(path, message) {
-    logger.debug(
-      { elapsed: elapsed(this.start), path },
-      message
-    )
+    logger.debug({ elapsed: elapsed(this.start), path }, message)
   }
 
   /**
@@ -76,5 +70,5 @@ function serializeError(e) {
 }
 
 module.exports = {
-  Logger
+  Logger,
 }
