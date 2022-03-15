@@ -29,6 +29,11 @@ async function main(event) {
     event.Records[0].s3.object.key.replace(/\+/g, ' ')
   )
 
+  logger.info(
+    key,
+    `Attempting to assemble Car with key ${key}`
+  )
+
   if (!key.startsWith('raw')) {
     const e = new Error(
       `lambda should only triggered with raw namespace: CAR with ${key} from bucket ${bucket}`
@@ -49,6 +54,11 @@ async function main(event) {
   if (structure === 'Complete') {
     await s3Client.putObject(bucket, completePath, body)
 
+    logger.info(
+      key,
+      `Car with root ${rootCid.toString()} written to ${completePath}`
+    )
+
     return { rootCid, structure }
   }
 
@@ -56,7 +66,7 @@ async function main(event) {
   if (!size) {
     logger.info(
       key,
-      `Car with root ${rootCid} does not have a DagPB root and we cannot find the size`
+      `Car with root ${rootCid.toString()} does not have a DagPB root and we cannot find the size`
     )
     return { rootCid, structure }
   }
@@ -64,7 +74,7 @@ async function main(event) {
   if (size > MAX_SIZE_TO_ATTEMPT) {
     logger.info(
       key,
-      `Car with root ${rootCid} is not complete for object ${key} from bucket ${bucket} and its known size is larger than ${MAX_SIZE_TO_ATTEMPT}`
+      `Car with root ${rootCid.toString()} is not complete for object ${key} from bucket ${bucket} and its known size is larger than ${MAX_SIZE_TO_ATTEMPT}`
     )
     return { rootCid, structure }
   }
@@ -77,7 +87,7 @@ async function main(event) {
   if (size > accumSize) {
     logger.info(
       key,
-      `Car with root ${rootCid} is still not entirely uploaded to bucket ${bucket}`
+      `Car with root ${rootCid.toString()} is still not entirely uploaded to bucket ${bucket}`
     )
     return { rootCid, structure, directoryStructure: 'Partial' }
   }
@@ -101,6 +111,11 @@ async function main(event) {
 
   if (directoryStructure === 'Complete') {
     await s3Client.putObject(bucket, completePath, directoryCar)
+
+    logger.info(
+      key,
+      `Car with root ${rootCid.toString()} written to ${completePath}`
+    )
   }
 
   // TODO: MARK CAR AS TRANSFORMED WITH METADATA?
@@ -148,7 +163,7 @@ async function inspectCar(car, logger, { key, bucket, metadata = {} }) {
 
     logger.debug(
       key,
-      `Obtained root cid ${rootCid} for object ${key} from bucket ${bucket}`
+      `Obtained root cid ${rootCid.toString()} for object ${key} from bucket ${bucket}`
     )
 
     const inspection = await inspectCarBlocks(rootCid, stat.blocksIterator)
