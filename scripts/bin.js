@@ -35,6 +35,7 @@ async function initLambda() {
   const iam = new aws.IAM()
   const lambda = new aws.Lambda({ apiVersion, region })
   const s3Api = new aws.S3()
+  const cloudwatchLogs = new aws.CloudWatchLogs()
 
   // Create Role
   const createRoleParams = {
@@ -74,6 +75,18 @@ async function initLambda() {
     })
   })
 
+  // Attach cloudwatch policy params
+  const attachCloudwatchPolicyParams = {
+    PolicyArn: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+    RoleName: name,
+  }
+  await new Promise((resolve, reject) => {
+    iam.attachRolePolicy(attachCloudwatchPolicyParams, (err, data) => {
+      if (err) return reject(err)
+      return resolve(data)
+    })
+  })
+
   // Create lambda function
   const zipContents = fs.readFileSync(path.join(__dirname, '../dist/lambda.zip'))
   const createFunctionParams = {
@@ -81,7 +94,7 @@ async function initLambda() {
       ZipFile: zipContents,
     },
     FunctionName: name,
-    Handler: `${name}.handler`,
+    Handler: 'index.handler',
     Role: role.Role.Arn,
     Runtime: 'nodejs14.x',
     MemorySize: 512
@@ -124,7 +137,17 @@ async function initLambda() {
     })
   })
 
-  // TODO: Setup cloudwatch
+  // Create cloud watch log group
+  const logGroupParams = {
+    logGroupName: `/aws/lambda/${name}`
+  }
+  await new Promise((resolve, reject) => {
+    cloudwatchLogs.createLogGroup(logGroupParams, function (err, data) {
+      if (err) return reject(err)
+      return resolve(data)
+    })
+  })
+
   log(`Successfully created lambda ${name}`)
 }
 

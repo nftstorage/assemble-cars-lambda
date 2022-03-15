@@ -13,7 +13,7 @@ try {
 
 const logger = pino(
   {
-    level: (process.env.NODE_DEBUG ?? '').includes('gateway-read-test')
+    level: (process.env.NODE_DEBUG ?? '').includes('assemble-cars')
       ? 'debug'
       : 'info',
     base: undefined,

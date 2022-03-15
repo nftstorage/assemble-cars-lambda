@@ -8,7 +8,7 @@
     "init": "npm run build && DEBUG=assemble-cars:* node scripts/bin.js init",
     "test": "ava test/*.node.js",
     "deploy": "aws lambda update-function-code --cli-connect-timeout 15000 --region $AWS_REGION --function-name $LAMBDA --zip-file fileb://dist/lambda.zip",
-    "deploy-l": "aws lambda update-function-code --cli-connect-timeout 15000 --region us-east-2 --function-name assemble-cars --zip-file fileb://dist/lambda.zip",
+    "deploy-l": "aws lambda update-function-code --cli-connect-timeout 15000 --region us-east-2 --function-name dotstorage-assemble-cars --zip-file fileb://dist/lambda.zip",
     "invoke": "aws lambda invoke --cli-binary-format raw-in-base64-out --region $AWS_REGION --function-name $LAMBDA --payload file://event.json --log-type Tail /dev/null | jq -r .LogResult | base64 -d"
   },
   "repository": {
